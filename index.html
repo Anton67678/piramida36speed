@@ -157,6 +157,31 @@ body{background:#0a0e0a;background-image:radial-gradient(ellipse 80% 50% at 50% 
 .spinner{width:28px;height:28px;border:3px solid rgba(200,168,75,.15);border-top-color:var(--gold);border-radius:50%;animation:spin .7s linear infinite;}
 @keyframes spin{to{transform:rotate(360deg)}}
 </style>
+
+<script>
+(function(){
+'use strict';
+const PN_API = 'https://innovative-optimism-production-038d.up.railway.app/api/v1';
+let _token = null;
+function getToken() { if(_token) return _token; _token=localStorage.getItem('pyramid_access_token'); return _token; }
+async function apiCall(path, body) {
+  const token = getToken();
+  const res = await fetch(PN_API+path, { method:'POST', credentials:'include',
+    headers:{'Content-Type':'application/json',...(token?{'Authorization':'Bearer '+token}:{})},
+    body: body ? JSON.stringify(body) : undefined });
+  return res.ok ? res.json() : null;
+}
+window.PNChallenge = {
+  async reportWin(timeSeconds) {
+    if (!getToken()) return;
+    try {
+      await apiCall('/game/automat/win', { session_id: 'challenge-'+Date.now(), stake:0, payout: timeSeconds });
+      console.info('[PN] Challenge win reported, time:', timeSeconds);
+    } catch(e) { console.warn('[PN]', e.message); }
+  }
+};
+})();
+</script>
 </head>
 <body>
 
@@ -911,6 +936,8 @@ async function endGame(won, surrendered){
   });
   if(won){
     setStatus(`🏆 Победа! Время: ${formatTime(t)}`, 'good');
+    // ← PYRAMID NETWORK
+    if(window.PNChallenge) PNChallenge.reportWin(t);
   } else if(surrendered){
     setStatus('🏳 Сдались', 'warn');
   } else {
