@@ -477,23 +477,28 @@ async function createRoom(){
   selectedChallenge = null;
   roomCode = genCode();
 
-  roomRef = ref(db, 'rooms/' + roomCode);
-  await set(roomRef, {
-    host: myId,
-    seed: null,
-    label: null,
-    forks: null,
-    status: 'waiting',
-    startTime: null,
-    players: {
-      [myId]: { name: myName, status: 'waiting', removed: 0, time: null, host: true }
-    }
-  });
+  try {
+    roomRef = ref(db, 'rooms/' + roomCode);
+    await set(roomRef, {
+      host: myId,
+      seed: null,
+      label: null,
+      forks: null,
+      status: 'waiting',
+      startTime: null,
+      players: {
+        [myId]: { name: myName, status: 'waiting', removed: 0, time: null, host: true }
+      }
+    });
 
-  document.getElementById('room-code-display').textContent = roomCode;
-  showScreen('screen-waiting');
-  listenRoom();
-  renderWaitingRoom();
+    document.getElementById('room-code-display').textContent = roomCode;
+    showScreen('screen-waiting');
+    listenRoom();
+    renderWaitingRoom();
+  } catch(e) {
+    console.error('[createRoom] Firebase error:', e);
+    alert('Ошибка создания комнаты: ' + e.message);
+  }
 }
 window.createRoom = createRoom;
 
@@ -504,35 +509,41 @@ async function joinRoom(){
   if(!name || !code) return;
 
   const errEl = document.getElementById('join-error');
-  errEl.textContent = '';
+  errEl.textContent = 'Подключение...';
   document.getElementById('join-btn').disabled = true;
 
-  const snap = await get(ref(db, 'rooms/' + code));
-  if(!snap.exists()){
-    errEl.textContent = 'Комната не найдена';
+  try {
+    const snap = await get(ref(db, 'rooms/' + code));
+    if(!snap.exists()){
+      errEl.textContent = 'Комната не найдена';
+      document.getElementById('join-btn').disabled = false;
+      return;
+    }
+    const room = snap.val();
+    if(room.status === 'done'){
+      errEl.textContent = 'Игра уже завершена';
+      document.getElementById('join-btn').disabled = false;
+      return;
+    }
+
+    myName = name;
+    isHost = false;
+    roomCode = code;
+    selectedChallenge = room.seed ? (CHALLENGES.find(c=>c.seed===room.seed)||{seed:room.seed,label:room.label,forks:room.forks}) : null;
+
+    roomRef = ref(db, 'rooms/' + roomCode);
+    await update(ref(db, `rooms/${roomCode}/players/${myId}`), {
+      name: myName, status: 'waiting', removed: 0, time: null, host: false
+    });
+
+    document.getElementById('room-code-display').textContent = roomCode;
+    showScreen('screen-waiting');
+    listenRoom();
+  } catch(e) {
+    console.error('[joinRoom] Firebase error:', e);
+    errEl.textContent = 'Ошибка подключения: ' + e.message;
     document.getElementById('join-btn').disabled = false;
-    return;
   }
-  const room = snap.val();
-  if(room.status === 'done'){
-    errEl.textContent = 'Игра уже завершена';
-    document.getElementById('join-btn').disabled = false;
-    return;
-  }
-
-  myName = name;
-  isHost = false;
-  roomCode = code;
-  selectedChallenge = room.seed ? (CHALLENGES.find(c=>c.seed===room.seed)||{seed:room.seed,label:room.label,forks:room.forks}) : null;
-
-  roomRef = ref(db, 'rooms/' + roomCode);
-  await update(ref(db, `rooms/${roomCode}/players/${myId}`), {
-    name: myName, status: 'waiting', removed: 0, time: null, host: false
-  });
-
-  document.getElementById('room-code-display').textContent = roomCode;
-  showScreen('screen-waiting');
-  listenRoom();
 }
 window.joinRoom = joinRoom;
 
