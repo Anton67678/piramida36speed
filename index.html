@@ -422,12 +422,12 @@ function toast(msg, dur=2500){
 }
 
 function updateHeaderBalance(){
-  const pyra = localStorage.getItem('pn_pyra_balance');
-  const points = localStorage.getItem('pyramid_balance');
+  const pyra = parseInt(localStorage.getItem('pn_pyra_balance') || '0');
+  const points = parseInt(localStorage.getItem('pyramid_balance') || '0');
   const pyraEl = document.getElementById('header-pyra-balance');
   const pointsEl = document.getElementById('header-points-balance');
-  if(pyraEl) pyraEl.textContent = pyra !== null ? pyra : '0';
-  if(pointsEl) pointsEl.textContent = points !== null ? points : '0';
+  if(pyraEl) pyraEl.textContent = pyra;
+  if(pointsEl) pointsEl.textContent = points;
 }
 
 // Обновляем баланс при загрузке и каждые 5 секунд
