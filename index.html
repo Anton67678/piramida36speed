@@ -364,19 +364,35 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db  = getDatabase(app);
 
-// ══ CONSTANTS ═════════════════════════════════════════════════════════════════
-const CHALLENGES = [
-  { id:1,  seed:'1802701126925-pc4z8hr4', forks:17, label:'Раздача #1'  },
-  { id:2,  seed:'1810571225597-lfn0nqw6', forks:15, label:'Раздача #2'  },
-  { id:3,  seed:'1854719013885-2o7qox49', forks:15, label:'Раздача #3'  },
-  { id:4,  seed:'1834075307349-9dx6bcau', forks:11, label:'Раздача #4'  },
-  { id:5,  seed:'1722305147360-472da8c8', forks:11, label:'Раздача #5'  },
-  { id:6,  seed:'1854045611505-luufu1sj', forks:10, label:'Раздача #6'  },
-  { id:7,  seed:'1714814016602-971owwp0', forks:10, label:'Раздача #7'  },
-  { id:8,  seed:'1832864638759-bc602s9g', forks:10, label:'Раздача #8'  },
-  { id:9,  seed:'1862017987743-p4jzqy3g', forks:9,  label:'Раздача #9'  },
-  { id:10, seed:'1720505493236-ak4lkic0', forks:8,  label:'Раздача #10' },
-];
+// ══ CHALLENGES (loaded from backend) ════════════════════════════════════════
+let CHALLENGES = [];
+const PN_ADMIN_URL = 'https://innovative-optimism-production-038d.up.railway.app/api/v1/admin';
+
+async function loadChallenges() {
+  try {
+    const token = localStorage.getItem('pyramid_access_token');
+    const res = await fetch(PN_ADMIN_URL + '/challenge-blocks?page=1&limit=100', {
+      headers: token ? { 'Authorization': 'Bearer ' + token } : {}
+    });
+    if (!res.ok) throw new Error('Failed to load');
+    const data = await res.json();
+    CHALLENGES = (data.blocks || [])
+      .map(b => ({
+        id: parseInt(b.id, 10),
+        seed: b.seed,
+        forks: b.difficulty,
+        label: 'Раздача #' + b.id,
+        difficulty: b.difficulty,
+        is_sacred: b.is_sacred
+      }))
+      .sort((a, b) => a.difficulty - b.difficulty);
+  } catch (e) {
+    console.warn('[loadChallenges]', e.message);
+    CHALLENGES = [];
+  }
+}
+
+loadChallenges();
 
 const SUITS = ['♠','♥','♦','♣'];
 const RANKS = ['6','7','8','9','10','J','Q','K','A'];
@@ -479,11 +495,14 @@ window.showRules = showRules;
 function buildSeedGrid(gridId, onSelect, activeSeed){
   const grid = document.getElementById(gridId);
   grid.innerHTML = '';
+  if(!CHALLENGES.length){ grid.innerHTML='<p style="color:rgba(242,234,216,.4);text-align:center">Загрузка...</p>'; return; }
   CHALLENGES.forEach(ch => {
     const el = document.createElement('div');
     el.className = 'seed-card' + (ch.seed === activeSeed ? ' selected' : '');
     el.dataset.id = ch.id;
-    el.innerHTML = `<div class="seed-card-num">${ch.label}</div><div class="seed-card-forks">⬡ ${ch.forks} развилок</div>`;
+    const diffLabel = ['D1','D2','D3','D4','D5','D6','D7'][ch.difficulty-1] || 'D'+ch.difficulty;
+    const diffColor = ch.difficulty <= 2 ? '#4ade80' : ch.difficulty <= 4 ? '#e8cc78' : ch.difficulty <= 6 ? '#e8a06a' : '#d94040';
+    el.innerHTML = `<div class="seed-card-num">${ch.label}</div><div class="seed-card-forks" style="color:${diffColor}">${diffLabel} · ⬡ ${ch.forks} развилок</div>`;
     el.onclick = () => onSelect(ch);
     grid.appendChild(el);
   });
@@ -509,6 +528,7 @@ window.showJoin = showJoin;
 // ══ CREATE ROOM ══════════════════════════════════════════════════════════════
 async function createRoomFirebase(){
   try {
+    if(!CHALLENGES.length) await loadChallenges();
     roomRef = ref(db, 'rooms/' + roomCode);
     await set(roomRef, {
       host: myId,
@@ -538,6 +558,7 @@ async function joinRoomFirebase(code){
   errEl.textContent = 'Подключение...';
 
   try {
+    if(!CHALLENGES.length) await loadChallenges();
     const snap = await get(ref(db, 'rooms/' + code));
     if(!snap.exists()){
       errEl.textContent = 'Комната не найдена';
