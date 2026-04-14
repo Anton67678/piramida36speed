@@ -366,12 +366,12 @@ const db  = getDatabase(app);
 
 // ══ CHALLENGES (loaded from backend) ════════════════════════════════════════
 let CHALLENGES = [];
-const PN_ADMIN_URL = 'https://innovative-optimism-production-038d.up.railway.app/api/v1/admin';
+const PN_ADMIN_URL = 'https://innovative-optimism-production-038d.up.railway.app/api/v1';
 
 async function loadChallenges() {
   try {
     const token = localStorage.getItem('pyramid_access_token');
-    const res = await fetch(PN_ADMIN_URL + '/challenge-blocks?page=1&limit=100', {
+    const res = await fetch(PN_ADMIN_URL + '/blocks/challenge?limit=100', {
       headers: token ? { 'Authorization': 'Bearer ' + token } : {}
     });
     if (!res.ok) throw new Error('Failed to load');
