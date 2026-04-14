@@ -192,6 +192,8 @@ window.PNChallenge = {
     try {
       await apiCall('/game/automat/win', { session_id: 'challenge-'+Date.now(), stake:0, payout: timeSeconds });
       console.info('[PN] Challenge win reported, time:', timeSeconds);
+      // Sync balance after win
+      setTimeout(() => { syncBalanceFromServer(); syncBalanceToServer(); syncBalanceToParent(); broadcastBalance(); }, 500);
     } catch(e) { console.warn('[PN]', e.message); }
   }
 };
@@ -447,9 +449,102 @@ function updateHeaderBalance(){
   if(pointsEl) pointsEl.textContent = points;
 }
 
+// ══ BALANCE SYNC ═══════════════════════════════════════════════════════════════
+const PN_SYNC_API = 'https://innovative-optimism-production-038d.up.railway.app/api/v1';
+let _syncToken = null;
+function getSyncToken() {
+  if (_syncToken) return _syncToken;
+  _syncToken = localStorage.getItem('pyramid_access_token');
+  return _syncToken;
+}
+
+async function syncBalanceFromServer() {
+  const token = getSyncToken();
+  if (!token) return;
+  try {
+    const res = await fetch(PN_SYNC_API + '/me', {
+      headers: { 'Authorization': 'Bearer ' + token }
+    });
+    if (!res.ok) {
+      if (res.status === 401) { localStorage.removeItem('pyramid_access_token'); _syncToken = null; }
+      return;
+    }
+    const data = await res.json();
+    const u = data.user || data;
+    if (u.points_balance !== undefined) {
+      localStorage.setItem('pyramid_balance', String(Math.max(parseInt(u.points_balance, 10) || 0, parseInt(localStorage.getItem('pyramid_balance') || '0'))));
+    }
+    if (u.pyra_balance !== undefined) {
+      localStorage.setItem('pn_pyra_balance', String(Math.max(parseInt(u.pyra_balance, 10) || 0, parseInt(localStorage.getItem('pn_pyra_balance') || '0'))));
+    }
+    updateHeaderBalance();
+    broadcastBalance();
+  } catch(e) { console.warn('[PN] syncBalanceFromServer:', e.message); }
+}
+
+async function syncBalanceToServer() {
+  const token = getSyncToken();
+  if (!token) return;
+  try {
+    const res = await fetch(PN_SYNC_API + '/me/balance/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+      body: JSON.stringify({
+        points_balance: parseInt(localStorage.getItem('pyramid_balance') || '0'),
+        pyra_balance: parseInt(localStorage.getItem('pn_pyra_balance') || '0')
+      })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.points_balance !== undefined) localStorage.setItem('pyramid_balance', String(data.points_balance));
+      if (data.pyra_balance !== undefined) localStorage.setItem('pn_pyra_balance', String(data.pyra_balance));
+      updateHeaderBalance();
+    }
+  } catch(e) { console.warn('[PN] syncBalanceToServer:', e.message); }
+}
+
+function syncBalanceToParent() {
+  try {
+    window.parent.postMessage({
+      type: 'PYRAMID_BALANCE_SYNC',
+      pyra_balance: localStorage.getItem('pn_pyra_balance') || '0',
+      points_balance: localStorage.getItem('pyramid_balance') || '0'
+    }, '*');
+  } catch(e) {}
+}
+
+let _bc;
+try {
+  _bc = new BroadcastChannel('pyramid_balance');
+  _bc.onmessage = function(e) {
+    if (e.data.type === 'PYRAMID_BALANCE_SYNC') {
+      localStorage.setItem('pn_pyra_balance', e.data.pyra_balance || '0');
+      localStorage.setItem('pyramid_balance', e.data.points_balance || '0');
+      updateHeaderBalance();
+    }
+  };
+} catch(e) {}
+
+function broadcastBalance() {
+  if (_bc) {
+    _bc.postMessage({
+      type: 'PYRAMID_BALANCE_SYNC',
+      pyra_balance: localStorage.getItem('pn_pyra_balance') || '0',
+      points_balance: localStorage.getItem('pyramid_balance') || '0'
+    });
+  }
+}
+
+function fullBalanceSync() {
+  updateHeaderBalance();
+  syncBalanceFromServer();
+  syncBalanceToParent();
+  broadcastBalance();
+}
+
 // Обновляем баланс при загрузке и каждые 5 секунд
-setTimeout(updateHeaderBalance, 100);
-setInterval(updateHeaderBalance, 5000);
+setTimeout(fullBalanceSync, 100);
+setInterval(fullBalanceSync, 10000);
 
 // ══ SCREEN ROUTER ════════════════════════════════════════════════════════════
 function showScreen(id){
