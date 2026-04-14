@@ -1254,6 +1254,25 @@ function goHome(){
 window.goHome = goHome;
 
 // ══ INIT ══════════════════════════════════════════════════════════════════════
+// Извлекаем токен из URL если есть (передаётся с главной страницы)
+(async () => {
+  try {
+    const urlParams = new URLSearchParams(window.location.search);
+    const urlToken = urlParams.get('token');
+    if (urlToken) {
+      localStorage.setItem('pyramid_access_token', urlToken);
+      _syncToken = urlToken;
+      history.replaceState(null, '', window.location.pathname);
+    }
+  } catch(e) {}
+
+  // Синхронизируем баланс с сервера
+  await syncBalanceFromServer();
+  await syncBalanceToServer();
+  updateHeaderBalance();
+  broadcastBalance();
+})();
+
 // Очищаем старые комнаты при выходе
 window.addEventListener('beforeunload', ()=>{
   if(roomRef&&isHost) remove(roomRef).catch(()=>{});
