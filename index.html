@@ -223,6 +223,8 @@ window.PNChallenge = {
     <div class="lobby-box" id="lobby-create-box">
       <div class="setup-label">Ваше имя</div>
       <input class="setup-input" id="lobby-name" placeholder="Введите имя" value="Игрок">
+      <div class="setup-label">Ставка (баллы)</div>
+      <input class="setup-input" id="lobby-stake" type="number" min="10" max="100000" value="100" placeholder="Ставка">
       <div style="display:flex;gap:10px;margin-top:8px;">
         <button class="btn primary" onclick="showCreate()">Создать комнату</button>
       </div>
@@ -240,6 +242,9 @@ window.PNChallenge = {
   <div class="lobby-box" id="lobby-wait-box">
     <div class="room-code-display" id="room-code-display">----</div>
     <div class="room-code-hint">Сообщите этот код другим игрокам</div>
+    <div id="stake-display" style="font-family:'Playfair Display',serif;font-size:1.1rem;color:var(--gold3);text-align:center;margin:8px 0;display:none;">
+      Ставка: <strong id="stake-value">0</strong> баллов
+    </div>
     <div id="wait-players"></div>
     <div class="lobby-status" id="wait-hint">Ожидаем игроков...</div>
     <button class="btn primary" id="start-game-btn" onclick="hostStartGame()" style="display:none;" disabled>Начать игру</button>
@@ -256,6 +261,7 @@ window.PNChallenge = {
   <div id="guest-seed-section" style="display:none;text-align:center;margin-top:16px;">
     <div class="lobby-status">Хост выбирает раздачу...</div>
     <div id="guest-selected-deal" style="font-family:'Playfair Display',serif;font-size:1.2rem;color:var(--gold3);margin-top:8px;min-height:1.5em;"></div>
+    <div id="guest-stake-info" style="font-size:.85rem;color:var(--gold2);margin-top:4px;"></div>
   </div>
 </div>
 
@@ -273,6 +279,8 @@ window.PNChallenge = {
     <span>Раздача <strong id="meta-deal">—</strong></span>
     <div class="divider"></div>
     <span>Игрок <strong id="meta-name">—</strong></span>
+    <div class="divider"></div>
+    <span>Ставка <strong id="meta-stake">—</strong></span>
   </div>
 
   <!-- Live scoreboard -->
@@ -341,7 +349,8 @@ window.PNChallenge = {
     <!-- Гость: ожидание -->
     <div id="room-lobby-guest" style="text-align:center;">
       <div class="lobby-status">Ожидаем выбора хоста...</div>
-      <div id="room-guest-deal" style="font-family:'Playfair Display',serif;font-size:1.15rem;color:var(--gold3);min-height:1.5em;margin:8px 0 16px;"></div>
+      <div id="room-guest-deal" style="font-family:'Playfair Display',serif;font-size:1.15rem;color:var(--gold3);min-height:1.5em;margin:8px 0 4px;"></div>
+      <div id="room-guest-stake" style="font-size:.85rem;color:var(--gold2);margin-bottom:12px;"></div>
       <button class="btn" onclick="leaveRoom()">Покинуть комнату</button>
     </div>
   </div>
@@ -624,12 +633,16 @@ window.showJoin = showJoin;
 async function createRoomFirebase(){
   try {
     if(!CHALLENGES.length) await loadChallenges();
+    const stakeInput = document.getElementById('lobby-stake');
+    const stake = Math.max(10, Math.min(100000, parseInt(stakeInput.value) || 100));
+    stakeInput.value = stake;
     roomRef = ref(db, 'rooms/' + roomCode);
     await set(roomRef, {
       host: myId,
       seed: null,
       label: null,
       forks: null,
+      stake: stake,
       status: 'waiting',
       startTime: null,
       players: {
@@ -638,6 +651,8 @@ async function createRoomFirebase(){
     });
 
     document.getElementById('room-code-display').textContent = roomCode;
+    document.getElementById('stake-display').style.display = '';
+    document.getElementById('stake-value').textContent = stake;
     showScreen('screen-waiting');
     listenRoom();
     renderWaitingRoom();
@@ -665,6 +680,19 @@ async function joinRoomFirebase(code){
       return;
     }
 
+    // Проверка баланса
+    const stake = parseInt(room.stake) || 0;
+    if(stake > 0){
+      const balance = parseInt(localStorage.getItem('pyramid_balance') || '0');
+      if(balance < stake){
+        errEl.textContent = `Недостаточно баллов. Нужно: ${stake}, у вас: ${balance}`;
+        return;
+      }
+      // Списываем ставку
+      localStorage.setItem('pyramid_balance', String(balance - stake));
+      fullBalanceSync();
+    }
+
     isHost = false;
     roomCode = code;
     selectedChallenge = room.seed ? (CHALLENGES.find(c=>c.seed===room.seed)||{seed:room.seed,label:room.label,forks:room.forks}) : null;
@@ -675,6 +703,9 @@ async function joinRoomFirebase(code){
     });
 
     document.getElementById('room-code-display').textContent = roomCode;
+    document.getElementById('stake-display').style.display = '';
+    document.getElementById('stake-value').textContent = stake;
+    document.getElementById('guest-stake-info').textContent = `Ставка списана: ${stake} баллов`;
     errEl.style.display = 'none';
     showScreen('screen-waiting');
     listenRoom();
@@ -701,6 +732,9 @@ function listenRoom(){
         if(!isHost){
           const dealEl = document.getElementById('room-guest-deal');
           if(dealEl) dealEl.textContent = room.seed ? `${room.label} · ⬡ ${room.forks} развилок` : 'Хост выбирает...';
+          const stakeEl = document.getElementById('room-guest-stake');
+          const stake = parseInt(room.stake) || 0;
+          if(stakeEl && stake > 0) stakeEl.textContent = `Ставка: ${stake} баллов`;
         }
       } else if(phase === 'idle'){
         // Первое подключение — показываем waiting screen
@@ -711,6 +745,7 @@ function listenRoom(){
 
     if(room.status === 'playing' && phase !== 'playing'){
       selectedChallenge = CHALLENGES.find(c=>c.seed===room.seed) || {seed:room.seed,label:room.label,forks:room.forks};
+      window._currentStake = parseInt(room.stake) || 0;
       finalShown = false;
       phase = 'idle'; // сбрасываем перед стартом
       document.getElementById('final-overlay').style.display = 'none';
@@ -774,6 +809,9 @@ function renderGuestWaiting(players, room){
   document.getElementById('guest-seed-section').style.display = '';
   const dealEl = document.getElementById('guest-selected-deal');
   dealEl.textContent = room.seed ? `${room.label} · ⬡ ${room.forks} развилок` : '';
+  const stakeEl = document.getElementById('guest-stake-info');
+  const stake = parseInt(room.stake) || 0;
+  if(stake > 0) stakeEl.textContent = `Ставка: ${stake} баллов`;
   const count = Object.keys(players).length;
   document.getElementById('wait-hint').textContent = `${count} игрок(а) · ожидаем старта от хоста`;
 }
@@ -790,13 +828,29 @@ async function hostStartGame(){
   if(!selectedChallenge){ toast('Выберите раздачу'); return; }
   const snap = await get(roomRef);
   if(!snap.exists()) return;
-  const players = snap.val().players || {};
+  const room = snap.val();
+  const players = room.players || {};
+  const stake = parseInt(room.stake) || 0;
+
+  // Проверка баланса хоста
+  if(stake > 0){
+    const balance = parseInt(localStorage.getItem('pyramid_balance') || '0');
+    if(balance < stake){
+      toast(`Недостаточно баллов: нужно ${stake}, у вас ${balance}`);
+      return;
+    }
+    // Списываем ставку хоста
+    localStorage.setItem('pyramid_balance', String(balance - stake));
+    fullBalanceSync();
+  }
+
   const updates = {
     status: 'playing',
     startTime: Date.now(),
     seed: selectedChallenge.seed,
     label: selectedChallenge.label,
     forks: selectedChallenge.forks,
+    blockOwner: null, // будет определено позже
   };
   // Сбрасываем статусы всех на playing-ready
   Object.keys(players).forEach(pid => {
@@ -810,6 +864,21 @@ window.hostStartGame = hostStartGame;
 
 // ══ LEAVE ════════════════════════════════════════════════════════════════════
 async function leaveRoom(){
+  // Возвращаем ставку гостю при выходе (до начала игры)
+  if(!isHost && phase === 'idle'){
+    try {
+      const snap = roomRef ? await get(roomRef).catch(()=>null) : null;
+      if(snap && snap.exists()){
+        const room = snap.val();
+        const stake = parseInt(room.stake) || 0;
+        if(stake > 0 && room.status === 'waiting'){
+          const balance = parseInt(localStorage.getItem('pyramid_balance') || '0');
+          localStorage.setItem('pyramid_balance', String(balance + stake));
+          fullBalanceSync();
+        }
+      }
+    } catch(e) {}
+  }
   if(roomUnsub){ roomUnsub(); roomUnsub=null; }
   if(roomRef && isHost){
     await remove(roomRef).catch(()=>{});
@@ -852,6 +921,7 @@ function startGameLocal(seed, serverStart){
 
   document.getElementById('meta-deal').textContent = selectedChallenge.label;
   document.getElementById('meta-name').textContent = myName;
+  document.getElementById('meta-stake').textContent = window._currentStake ? window._currentStake + ' ●' : '—';
   document.getElementById('game-room-label').textContent = 'Комната ' + roomCode;
 
   // Таймер — синхронизирован с серверным временем старта
@@ -1161,20 +1231,25 @@ function renderFinalTable(players){
 
 // ══ FINAL SCREEN ══════════════════════════════════════════════════════════════
 let finalShown=false;
-function showFinal(players, room){
+async function showFinal(players, room){
   if(finalShown) return;
   finalShown=true;
   phase='final';
   clearInterval(timerInterval);
+
+  // Распределение выигрыша
+  const stake = parseInt(room.stake) || 0;
+  if(stake > 0) await distributeWinnings(players, room);
 
   // Заголовок
   const myP = players[myId];
   const winner = Object.entries(players).find(([,p])=>p.status==='done');
   let titleTxt, subTxt;
   if(myP && myP.status==='done'){
-    titleTxt='🥇 Вы решили пирамиду!'; subTxt=`Время: ${formatTime(myP.time)} · ожидаем остальных...`;
+    const prizeText = stake > 0 ? ` · Выигрыш: ${calculateMyPrize(players, stake)} баллов` : '';
+    titleTxt='🥇 Вы решили пирамиду!'; subTxt=`Время: ${formatTime(myP.time)}${prizeText}`;
   } else if(winner){
-    titleTxt=`🏆 Победил ${winner[1].name}`; subTxt='Вы не смогли решить этот расклад.';
+    titleTxt=`🏆 Победил ${winner[1].name}`; subTxt=stake > 0 ? `Ставка ${stake} баллов списана` : 'Вы не смогли решить этот расклад.';
   } else {
     titleTxt='💀 Ходов нет'; subTxt='Ожидаем остальных игроков...';
   }
@@ -1183,6 +1258,70 @@ function showFinal(players, room){
   renderFinalTable(players);
 
   document.getElementById('final-overlay').style.display = 'flex';
+}
+
+function calculateMyPrize(players, stake){
+  const totalPot = Object.keys(players).length * stake;
+  const fee = Math.floor(totalPot * 0.10);
+  const prizePool = totalPot - fee;
+  const playerCount = Object.keys(players).length;
+  if(playerCount <= 3) return prizePool;
+  return Math.floor(prizePool * 0.70);
+}
+
+async function distributeWinnings(players, room){
+  const stake = parseInt(room.stake) || 0;
+  if(stake <= 0) return;
+
+  const playerCount = Object.keys(players).length;
+  const totalPot = playerCount * stake;
+
+  // Комиссии
+  const platformFee = Math.floor(totalPot * 0.02);
+  const jackpotFee = Math.floor(totalPot * 0.05);
+  const ownerFee = Math.floor(totalPot * 0.03);
+  const totalFees = platformFee + jackpotFee + ownerFee;
+  const prizePool = totalPot - totalFees;
+
+  // Определяем победителей
+  const sorted = Object.entries(players).sort((a,b) => {
+    const da=a[1], db2=b[1];
+    if(da.status==='done' && db2.status!=='done') return -1;
+    if(db2.status==='done' && da.status!=='done') return 1;
+    if(da.status==='done' && db2.status==='done') return (da.time||999)-(db2.time||999);
+    return 0;
+  });
+
+  // Распределение призов
+  const prizes = {};
+  const winners = sorted.filter(([,p]) => p.status === 'done');
+  if(winners.length > 0){
+    if(playerCount <= 3){
+      // 100% победителю
+      prizes[winners[0][0]] = prizePool;
+    } else if(playerCount <= 10){
+      // 70%/30%
+      prizes[winners[0][0]] = Math.floor(prizePool * 0.70);
+      if(winners.length > 1) prizes[winners[1][0]] = prizePool - prizes[winners[0][0]];
+    } else {
+      // 85%/15%
+      prizes[winners[0][0]] = Math.floor(prizePool * 0.85);
+      if(winners.length > 1) prizes[winners[1][0]] = prizePool - prizes[winners[0][0]];
+    }
+  }
+
+  // Отправляем на сервер
+  try {
+    if(myId in prizes && prizes[myId] > 0){
+      const currentBalance = parseInt(localStorage.getItem('pyramid_balance') || '0');
+      const newBalance = currentBalance + prizes[myId];
+      localStorage.setItem('pyramid_balance', String(newBalance));
+      await syncBalanceToServer();
+      fullBalanceSync();
+    }
+    // Логируем распределение
+    console.info('[PN] Distribution:', { totalPot, platformFee, jackpotFee, ownerFee, prizePool, prizes, stake });
+  } catch(e) { console.warn('[PN] distributeWinnings:', e.message); }
 }
 
 // ══ BACK TO ROOM ════════════════════════════════════════════════════════════
